@@ -77,10 +77,14 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_BD5E3E0D86BA48B1B16A969E91992214 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_0B8A119F1262440290718F8B0150D4FF }}
 
+      - name: Wait to avoid SCM restart conflict
+        run: sleep 30
+
       - name: 'Deploy to Azure Web App'
         uses: azure/webapps-deploy@v3
         id: deploy-to-webapp
         with:
           app-name: 'taskpoint-ia'
           slot-name: 'Production'
+
           
