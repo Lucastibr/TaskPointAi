@@ -21,7 +21,7 @@ openai_api_key = os.getenv("OPENAI_API_KEY")
 # Inicializar o FastAPI
 app = FastAPI(title="TaskPoint SQL API")
 
-# Modelo Pydantic para a entrada da pergunta
+# Modelo Pydantic para a entrada da pergunta .
 class QuestionRequest(BaseModel):
     question: str
 
