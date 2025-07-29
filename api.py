@@ -21,11 +21,6 @@ openai_api_key = os.getenv("OPENAI_API_KEY")
 # Inicializar o FastAPI
 app = FastAPI(title="TaskPoint SQL API")
 
-# Endpoint raiz para verificar se a API está funcionando
-@app.get("/")
-async def root():
-    return {"message": "TaskPoint SQL API está funcionando!", "status": "online"}
-
 # Modelo Pydantic para a entrada da pergunta .
 class QuestionRequest(BaseModel):
     question: str
@@ -116,33 +111,13 @@ def extract_sql_query(response):
     return match.group(1).strip() if match else response.strip()
 
 # Conexão global com o banco (inicializada na inicialização da API)
-db = None
-sql_chain = None
-response_chain = None
-
-# Inicializar conexões de forma lazy
-def initialize_connections():
-    global db, sql_chain, response_chain
-    if db is None:
-        try:
-            db = get_working_db_connection()
-            sql_chain, response_chain = setup_sql_assistant(db)
-            print("Conexões inicializadas com sucesso!")
-        except Exception as e:
-            print(f"Erro ao inicializar conexões: {e}")
-            db = None
+db = get_working_db_connection()
+sql_chain, response_chain = setup_sql_assistant(db)
 
 # Endpoint da API
 @app.post("/ask")
 async def ask_question(request: QuestionRequest):
     try:
-        # Inicializar conexões se necessário
-        if db is None:
-            initialize_connections()
-        
-        if db is None:
-            raise HTTPException(status_code=503, detail="Erro na conexão com o banco de dados")
-        
         start_time = time.time()
         table_info = db.get_table_info()
         sql_response = sql_chain.invoke({"input": request.question, "table_info": table_info})
@@ -165,30 +140,4 @@ async def ask_question(request: QuestionRequest):
 # Endpoint de saúde para verificar se a API está funcionando
 @app.get("/health")
 async def health_check():
-    try:
-        # Tentar inicializar conexões se necessário
-        if db is None:
-            initialize_connections()
-        
-        # Testar conexão com o banco
-        db_status = False
-        if db is not None:
-            try:
-                db.run("SELECT 1")
-                db_status = True
-            except:
-                db_status = False
-        
-        return {
-            "status": "API is running", 
-            "database_connected": db_status,
-            "environment_vars": {
-                "DB_SERVER": os.getenv("DB_SERVER") is not None,
-                "DB_NAME": os.getenv("DB_NAME") is not None,
-                "DB_USER": os.getenv("DB_USER") is not None,
-                "DB_PASSWORD": os.getenv("DB_PASSWORD") is not None,
-                "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY") is not None
-            }
-        }
-    except Exception as e:
-        return {"status": "API is running", "error": str(e), "database_connected": False}
+    return {"status": "API is running", "database_connected": db is not None}
