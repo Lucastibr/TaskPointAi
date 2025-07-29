@@ -30,55 +30,37 @@ jobs:
           source venv/bin/activate
       
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          # Instalar dependências nativas para pyodbc no Ubuntu
-          sudo apt-get update
-          sudo apt-get install -y gcc g++ unixodbc-dev
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
         
       # Optional: Add step to run tests here (PyTest, Django test suites, etc.)
-
-      - name: Zip artifact for deployment
-        run: zip release.zip ./* -r
 
       - name: Upload artifact for deployment jobs
         uses: actions/upload-artifact@v4
         with:
           name: python-app
           path: |
-            release.zip
+            .
             !venv/
 
   deploy:
     runs-on: ubuntu-latest
     needs: build
-    environment:
-      name: 'Production'
-      url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
     permissions:
       id-token: write #This is required for requesting the JWT
-      contents: read #This is required for actions/checkout 
+      contents: read #This is required for actions/checkout
 
     steps:
       - name: Download artifact from build job
         uses: actions/download-artifact@v4
         with:
           name: python-app
-
-      - name: Unzip artifact for deployment
-        run: unzip release.zip
-
       
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_757518501E834460921104E5F665B99A }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_BD5E3E0D86BA48B1B16A969E91992214 }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_0B8A119F1262440290718F8B0150D4FF }}
-
-      - name: Wait to avoid SCM restart conflict
-        run: sleep 30
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_CC3E2F5A2D3C42AE938CB5E923EA22C2 }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_2D41EA510A674270BE6D2EFF07C2A39C }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_2425E9BBB14F4E3BBB09EF3DB689BC8A }}
 
       - name: 'Deploy to Azure Web App'
         uses: azure/webapps-deploy@v3
@@ -86,5 +68,4 @@ jobs:
         with:
           app-name: 'taskpoint-ia'
           slot-name: 'Production'
-
           
