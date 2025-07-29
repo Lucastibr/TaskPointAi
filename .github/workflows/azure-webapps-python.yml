@@ -50,6 +50,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+          source venv/bin/activate
           python -m pip install --upgrade pip
           # Instalar dependências nativas para pyodbc no Ubuntu
           sudo apt-get update
@@ -86,6 +87,12 @@ jobs:
 
       - name: Unzip artifact for deployment
         run: unzip release.zip
+
+      # ADICIONADO: Login no Azure
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: 'Deploy to Azure Web App'
         id: deploy-to-webapp
