@@ -1,7 +1,8 @@
 #!/bin/bash
 echo "Instalando ODBC Driver 17 para SQL Server..."
 apt-get update
-ACCEPT_EULA=Y apt-get install -y msodbcsql17
+apt-get install -y unixodbc-dev
+ACCEPT_EULA=Y apt-get install msodbcsql17
 
 echo "Instalando dependências..."
 pip install -r requirements.txt
