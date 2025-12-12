@@ -30,7 +30,14 @@ jobs:
         run: |
           python -m venv antenv
           source antenv/bin/activate
+          python -m pip install --upgrade pip
+          # Instalar dependências nativas para pyodbc no Ubuntu
+          sudo apt-get update
+          sudo apt-get install -y gcc g++ unixodbc-dev
           pip install -r requirements.txt
+
+      - name: Zip artifact for deployment
+        run: zip release.zip ./* -r
                 
       # By default, when you enable GitHub CI/CD integration through the Azure portal, the platform automatically sets the SCM_DO_BUILD_DURING_DEPLOYMENT application setting to true. This triggers the use of Oryx, a build engine that handles application compilation and dependency installation (e.g., pip install) directly on the platform during deployment. Hence, we exclude the antenv virtual environment directory from the deployment artifact to reduce the payload size. 
       - name: Upload artifact for deployment jobs
@@ -63,4 +70,4 @@ jobs:
         with:
           app-name: 'taskpoint-ia-api'
           slot-name: 'Production'
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_4F654A55C3464B3589D2D640E9987038 }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
