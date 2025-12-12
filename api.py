@@ -7,6 +7,7 @@ import urllib.parse
 import logging
 import json
 import uuid
+import datetime
 
 from langchain_community.utilities import SQLDatabase
 from langchain_openai import ChatOpenAI
@@ -90,6 +91,7 @@ class IntentDto(BaseModel):
         "GET_EMPLOYEE_BANK_HOURS",
         "GET_NEXT_VACATION_PERIOD",
         "GET_ABSENT_EMPLOYEES",
+        "GET_EMPLOYEE_TODAY_SCHEDULE",  # <- NOVO INTENT
         "UNKNOWN",
     ]
     employee_scope: Optional[Literal["SELF", "ONE", "ALL"]] = None
@@ -134,14 +136,8 @@ llm_natural = ChatOpenAI(
 INTENT_SYSTEM_PROMPT = """
 Você é um classificador de intenções especializado no sistema de ponto eletrônico.
 
-SEMPRE responda APENAS o JSON do intent.
+SEMPRE responda APENAS o JSON do intent, no formato abaixo:
 
-Regras:
-- NÃO gere SQL.
-- NÃO explique nada fora do JSON.
-- Saída DEVE ser sempre JSON válido.
-
-FORMATO:
 {
   "intent": "...",
   "employee_scope": "SELF" | "ONE" | "ALL" | null,
@@ -154,37 +150,58 @@ FORMATO:
   }
 }
 
+Regras gerais:
+- NÃO gere SQL.
+- NÃO escreva texto explicativo fora do JSON.
+- Saída DEVE ser JSON válido.
+
 INTENTS SUPORTADOS:
 
 1) GET_EMPLOYEE_BANK_HOURS
-Usar quando o usuário perguntar sobre:
-- "horas que eu tenho"
-- "horas acumuladas"
-- "banco de horas"
-- "saldo de horas"
-- "quantas horas eu tenho na casa"  <-- expressão típica do sistema
-- "quanto eu tenho de banco"
+Usar quando o usuário perguntar sobre saldo de banco de horas:
+- "quantas horas eu tenho no banco?"
+- "qual meu saldo de horas?"
+- "quanto eu tenho acumulado?"
+- "quantas horas eu tenho na casa?"   // expressão comum
 
-SEMPRE que o usuário usar "eu", "meu", "minhas", "para mim":
-employee_scope = "SELF".
+Se o usuário fala de si mesmo ("eu", "meu", "minhas"):
+- employee_scope = "SELF"
 
 2) GET_NEXT_VACATION_PERIOD
-Perguntas sobre próxima férias:
-- "quando tiro férias?"
-- "quando são minhas férias?"
+Usar quando o usuário perguntar sobre próximas férias:
+- "quando eu tiro férias?"
+- "quando são minhas próximas férias?"
 - "qual meu próximo período de férias?"
 
 3) GET_ABSENT_EMPLOYEES
-Perguntas sobre faltas:
+Usar quando o usuário pergunta sobre faltas de funcionários:
 - "quem faltou hoje?"
 - "quais funcionários faltaram?"
-- "quem não veio?"
+- "quem não veio trabalhar hoje?"
 
-SE A PERGUNTA FOR DUVIDOSA:
-- PREFIRA CLASSIFICAR como um desses intents ao invés de UNKNOWN.
-- Só use UNKNOWN se realmente não for RH/ponto eletrônico.
+4) GET_EMPLOYEE_TODAY_SCHEDULE
+Usar quando o usuário perguntar sobre sua jornada/horário de trabalho do dia:
+- "qual minha jornada de trabalho pra hoje?"
+- "qual meu horário hoje?"
+- "que horas eu entro e saio?"
+- "qual meu expediente hoje?"
+- "qual meu turno hoje?"
 
+Se o usuário pergunta em primeira pessoa ("eu", "meu", "minha jornada"):
+- employee_scope = "SELF"
+
+5) UNKNOWN
+Usar APENAS quando a pergunta não tiver relação com:
+- banco de horas,
+- férias,
+- jornada/horário,
+- faltas/ausências,
+- ponto / registro de trabalho.
+
+Se estiver em dúvida entre um intent conhecido e UNKNOWN,
+prefira mapear para um dos intents conhecidos.
 """
+
 
 def classify_intent(question: str, user: AuthenticatedUser) -> IntentDto:
     user_context = f"Usuário: {user.name}, pessoa_id={user.pessoa_id}, role={user.role}"
@@ -369,6 +386,42 @@ def handle_get_absent_employees(intent: IntentDto, user: AuthenticatedUser):
     result = db.run(sql)
     return result
 
+def handle_get_employee_today_schedule(intent: IntentDto, user: "AuthenticatedUser"):
+    """
+    Retorna a jornada de trabalho do colaborador logado para o dia de hoje,
+    com base em Pessoa -> JornadaTrabalho -> JornadaDias.
+    """
+    if not user.pessoa_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Usuário autenticado não possui PessoaId associado."
+        )
+
+    # weekday() -> segunda=0 ... domingo=6
+    today_weekday = datetime.datetime.today().weekday()
+
+    sql = f"""
+        SELECT 
+            jt.Descricao AS Jornada,
+            jd.DiasSemana,
+            jd.HorarioInicio,
+            jd.HorarioFim,
+            jd.IntervaloInicio,
+            jd.IntervaloFim
+        FROM Pessoa p
+        INNER JOIN JornadaTrabalho jt ON p.JornadaTrabalhoId = jt.Id
+        INNER JOIN JornadaDias jd ON jd.JornadaTrabalhoId = jt.Id
+        WHERE p.Id = CONVERT(uniqueidentifier, '{user.pessoa_id}')
+          AND jd.DiasSemana = {today_weekday}
+    """
+
+    # Se você tiver get_db(), use get_db().run(sql). Se não, deixe db.run(sql).
+    rows = db.run(sql)
+
+    return {
+        "sql": sql,
+        "rows": rows,
+    }
 
 def execute_intent(intent: IntentDto, user: AuthenticatedUser):
     ensure_authorization(user, intent)
@@ -382,6 +435,9 @@ def execute_intent(intent: IntentDto, user: AuthenticatedUser):
     if intent.intent == "GET_ABSENT_EMPLOYEES":
         return handle_get_absent_employees(intent, user)
 
+    elif intent.intent == "GET_EMPLOYEE_TODAY_SCHEDULE":
+        return handle_get_employee_today_schedule(intent, user)
+
     raise HTTPException(status_code=400, detail="Intent não suportado.")
 
 
@@ -390,20 +446,73 @@ def execute_intent(intent: IntentDto, user: AuthenticatedUser):
 # ============================================
 
 def build_natural_response(question: str, intent: IntentDto, raw_result) -> str:
+    intent_name = intent.intent
+
+    # Instruções específicas por intent
+    intent_guidance = ""
+
+    if intent_name == "GET_EMPLOYEE_BANK_HOURS":
+        intent_guidance = """
+Se a intenção for GET_EMPLOYEE_BANK_HOURS:
+- Some ou interprete o campo de saldo total (ex.: SaldoMinutos ou SomaEntradaSaida).
+- Responda algo como: "Você tem X horas acumuladas no seu banco de horas."
+- Se não houver dados, diga que não foi encontrado saldo para essa pessoa.
+"""
+
+    elif intent_name == "GET_NEXT_VACATION_PERIOD":
+        intent_guidance = """
+Se a intenção for GET_NEXT_VACATION_PERIOD:
+- Use DataInicio e DataFim para montar a próxima janela de férias.
+- Exemplo: "Suas próximas férias serão de DD/MM/AAAA a DD/MM/AAAA."
+- Se a lista estiver vazia, diga que não há férias registradas ou aprovadas.
+"""
+
+    elif intent_name == "GET_ABSENT_EMPLOYEES":
+        intent_guidance = """
+Se a intenção for GET_ABSENT_EMPLOYEES:
+- Liste funcionários retornados no resultado.
+- Exemplo: "Hoje faltaram: João, Maria..."
+- Se estiver vazio: "Hoje não há registros de ausência."
+"""
+
+    elif intent_name == "GET_EMPLOYEE_TODAY_SCHEDULE":
+        intent_guidance = """
+Se a intenção for GET_EMPLOYEE_TODAY_SCHEDULE:
+- Cada linha contém: Jornada, HorarioInicio, HorarioFim, IntervaloInicio, IntervaloFim.
+- Converta horários no formato amigável HH:MM.
+- Monte uma frase clara:
+  - "Sua jornada hoje é das HH:MM às HH:MM, com intervalo das HH:MM às HH:MM."
+- Se não houver registros, responda:
+  - "Hoje você não possui jornada de trabalho definida."
+"""
+
+    else:
+        intent_guidance = """
+Se a intenção for desconhecida, gere uma resposta genérica dizendo que a consulta não é suportada.
+"""
+
+    # Prompt final enviado ao modelo
     prompt = f"""
 Pergunta do usuário: "{question}"
 
-Intent identificada: {intent.intent}
+Intent: {intent_name}
 Intent JSON: {intent.json()}
-Resultado bruto da consulta ao banco (JSON): {json.dumps(raw_result, default=str)}
 
-Gere uma resposta curta, clara e em português, explicando o resultado de forma amigável.
-Não mostre SQL. Evite termos técnicos.
-Se não houver dados (lista vazia ou null), explique de forma simples.
+Resultado bruto da consulta (JSON):
+{json.dumps(raw_result, default=str)}
+
+INSTRUÇÕES ESPECÍFICAS:
+{intent_guidance}
+
+Regras gerais:
+- Escreva sempre uma resposta curta e natural em português do Brasil.
+- Não inclua SQL.
+- Se não houver dados, explique de forma simples e humana.
+- Não use termos técnicos do banco.
 """
+
     msg = llm_natural.invoke(prompt)
     return msg.content.strip()
-
 
 # ============================================
 # FastAPI
