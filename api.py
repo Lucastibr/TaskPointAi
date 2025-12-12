@@ -20,7 +20,6 @@ load_dotenv()
 logger = logging.getLogger("taskpoint-intents-api")
 logging.basicConfig(level=logging.INFO)
 
-
 server = os.getenv("DB_SERVER")
 database = os.getenv("DB_NAME")
 username = os.getenv("DB_USER")
